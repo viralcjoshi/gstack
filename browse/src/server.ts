@@ -44,6 +44,7 @@ import { safeUnlink, safeUnlinkQuiet, safeKill } from './error-handling';
 import { startSocksBridge, testUpstream, type BridgeHandle } from './socks-bridge';
 import { parseProxyConfig, toUpstreamConfig, ProxyConfigError } from './proxy-config';
 import { redactProxyUrl } from './proxy-redact';
+import { shouldSpawnXvfb, pickFreeDisplay, spawnXvfb, xvfbInstallHint, type XvfbHandle } from './xvfb';
 import { logTunnelDenial } from './tunnel-denial-log';
 import {
   mintSseSessionToken, validateSseSessionToken, extractSseCookie,
@@ -1087,6 +1088,33 @@ async function start() {
     });
   }
 
+  // ─── Xvfb auto-spawn (Linux + headed + no DISPLAY) ─────────────
+  // codex F2: walk display range to pick a free one (never hardcode :99);
+  // record start-time alongside PID so cleanup can validate ownership and
+  // not kill a recycled PID.
+  let xvfb: XvfbHandle | null = null;
+  const xvfbDecision = shouldSpawnXvfb(process.env, process.platform);
+  if (xvfbDecision.spawn) {
+    const displayNum = pickFreeDisplay();
+    if (displayNum == null) {
+      console.error('[browse] no free X display in range :99-:120 — refusing to clobber existing X servers');
+      process.exit(1);
+    }
+    try {
+      xvfb = await spawnXvfb(displayNum);
+      process.env.DISPLAY = xvfb.display;
+      console.log(`[browse] [xvfb] spawned on ${xvfb.display} (pid ${xvfb.pid})`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[browse] [xvfb] FAILED: ${msg}`);
+      console.error(`[browse] [xvfb] hint: ${xvfbInstallHint()}`);
+      process.exit(1);
+    }
+    process.on('exit', () => { try { xvfb?.close(); } catch { /* shutting down */ } });
+  } else if (process.env.BROWSE_HEADED === '1') {
+    console.log(`[browse] [xvfb] skipped: ${xvfbDecision.reason}`);
+  }
+
   // Launch browser (headless or headed with extension)
   // BROWSE_HEADLESS_SKIP=1 skips browser launch entirely (for HTTP-only testing)
   const skipBrowser = process.env.BROWSE_HEADLESS_SKIP === '1';
@@ -2068,6 +2096,10 @@ async function start() {
     // D2 daemon-mismatch detection: CLI computes the same hash from its
     // resolved flags and refuses if it differs from this stored value.
     ...(process.env.BROWSE_CONFIG_HASH ? { configHash: process.env.BROWSE_CONFIG_HASH } : {}),
+    // Xvfb child PID + start-time + display so disconnect (or a future
+    // daemon launch on this state file) can validate-then-cleanup orphans
+    // without clobbering a recycled PID.
+    ...(xvfb ? { xvfbPid: xvfb.pid, xvfbStartTime: xvfb.startTime, xvfbDisplay: xvfb.display } : {}),
   };
   const tmpFile = config.stateFile + '.tmp';
   fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), { mode: 0o600 });

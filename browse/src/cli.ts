@@ -1056,8 +1056,12 @@ Refs:           After 'snapshot', use @e1, @e2... as selectors:
   // guard blocks all commands when the server is unresponsive.
   if (command === 'disconnect') {
     const existingState = readState();
-    if (!existingState || existingState.mode !== 'headed') {
-      console.log('Not in headed mode — nothing to disconnect.');
+    // disconnect applies when there's a non-default daemon — headed mode OR
+    // any custom config (--proxy/--headed) recorded as configHash. Plain
+    // headless daemons should use 'stop' instead.
+    const hasCustomConfig = existingState && (existingState.mode === 'headed' || existingState.configHash);
+    if (!existingState || !hasCustomConfig) {
+      console.log('Not in headed/custom-config mode — nothing to disconnect.');
       process.exit(0);
     }
     // Try graceful shutdown via server
@@ -1092,6 +1096,22 @@ Refs:           After 'snapshot', use @e1, @e2... as selectors:
     const profileDir = path.join(process.env.HOME || '/tmp', '.gstack', 'chromium-profile');
     for (const lockFile of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
       safeUnlinkQuiet(path.join(profileDir, lockFile));
+    }
+    // Xvfb orphan cleanup: if the recorded PID still matches our Xvfb (by
+    // cmdline AND start-time), kill it. PID-only would risk killing a
+    // recycled PID belonging to an unrelated process.
+    if (existingState.xvfbPid && existingState.xvfbStartTime) {
+      try {
+        const { cleanupXvfb } = await import('./xvfb');
+        cleanupXvfb({
+          pid: existingState.xvfbPid,
+          startTime: existingState.xvfbStartTime,
+          display: existingState.xvfbDisplay || ':99',
+        });
+      } catch {
+        // Best effort — Linux-only module on a non-Linux disconnect may
+        // not load; cleanup is best-effort anyway.
+      }
     }
     safeUnlinkQuiet(config.stateFile);
     console.log('Disconnected (server was unresponsive — force cleaned).');
