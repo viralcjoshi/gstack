@@ -44,6 +44,32 @@ import {
 const shouldRun = !!process.env.EVALS && process.env.EVALS_TIER === 'gate';
 const describeE2E = shouldRun ? describe : describe.skip;
 
+// Concrete plan to review. Used by the --disallowedTools test to skip
+// the "what should I review?" deliberation that otherwise eats the
+// model's budget. Has CEO-review-shaped issues (premise gap, vague
+// success metric, scope-creep smell) so Step 0 has real material.
+const SEED_PLAN_FOR_CEO_REVIEW = `
+# Plan: Launch a "developer-friendly" pricing tier
+
+## Goal
+Increase developer adoption.
+
+## Success metric
+More signups.
+
+## Premise
+We haven't talked to any developers about whether the current pricing
+is actually a barrier. The team agreed it "feels like" it should be
+cheaper. No data yet on what dev users would pay for or what the unit
+economics would look like at the new price point.
+
+## Plan
+- Pick a 30% discount as the developer tier
+- Add an email field to /pricing for "verify with @company.com"
+- Auto-enroll anyone with @gmail/@hotmail addresses too as a pilot
+- Ship next week
+`.trim();
+
 describeE2E('plan-ceo-review plan-mode smoke (gate)', () => {
   test('first terminal outcome is asked (Step 0 fires before any plan write)', async () => {
     const obs = await runPlanSkillObservation({
@@ -103,15 +129,23 @@ describeE2E('plan-ceo-review plan-mode smoke (gate)', () => {
   //   - 'timeout'      — neither asked nor terminated in budget
   //   - 'plan_ready' or 'exited' WITHOUT either Decisions section or BLOCKED
   test('AskUserQuestion surfaces when --disallowedTools AskUserQuestion is set', async () => {
+    // Pre-prime with concrete plan content so the model doesn't burn its
+    // budget deliberating about WHICH artifact to review. Without this seed,
+    // a bare /plan-ceo-review under --disallowedTools puts the model in a
+    // 5-minute thinking loop trying to enumerate scope options before
+    // surfacing them as prose. With the seed, the model has a real plan to
+    // critique and can move directly to Step 0 / Section 1 findings.
+    //
+    // The test still exercises the regression we care about: under
+    // --disallowedTools, does the skill SURFACE its first decision question
+    // (via prose, BLOCKED, or some visible surface) rather than silently
+    // ExitPlanMode-ing?
     const obs = await runPlanSkillObservation({
       skillName: 'plan-ceo-review',
       inPlanMode: true,
       extraArgs: ['--disallowedTools', 'AskUserQuestion'],
-      // 10-min budget: post-v1.28 the model under --disallowedTools sometimes
-      // spends 5+ min in "high effort thinking" before surfacing options. The
-      // judge fires every 30s and high-water-marks the first prose-AUQ tick;
-      // 10 min gives the model 20 surfacing windows.
-      timeoutMs: 600_000,
+      initialPlanContent: SEED_PLAN_FOR_CEO_REVIEW,
+      timeoutMs: 300_000,
     });
 
     // The user must SEE the question one way or another. Three valid surfaces:
@@ -163,5 +197,5 @@ describeE2E('plan-ceo-review plan-mode smoke (gate)', () => {
     // to enforce the at-bottom contract against. The contract is
     // exercised by the periodic finding-count tests, which DO run the
     // full review.
-  }, 660_000);  // outer = inner timeoutMs (600_000) + 60s grace
+  }, 360_000);
 });
