@@ -57,7 +57,13 @@ describe('setup: _link_or_copy invariant (D7)', () => {
   });
 });
 
-describe('setup: _link_or_copy helper — behavior matrix', () => {
+// Behavior matrix uses Unix `ln -snf` semantics in the IS_WINDOWS=0 cells.
+// On Windows-without-Developer-Mode (e.g. GitHub's free `windows-latest`
+// runner), `ln -snf` silently produces a file copy rather than a symlink —
+// that's literally the bug this helper exists to work around. Skip the whole
+// matrix on Windows; the static-invariant tests above already pin the helper
+// shape that the Windows install relies on.
+describe.skipIf(process.platform === 'win32')('setup: _link_or_copy helper — behavior matrix', () => {
   // Source the helper into a temp shell with IS_WINDOWS set and exercise
   // each cell of the file/dir × Windows/Unix matrix.
   function runHelper(

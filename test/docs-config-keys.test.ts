@@ -61,7 +61,11 @@ describe('docs ↔ gstack-config key drift guard', () => {
     expect(stale).toEqual([]);
   });
 
-  test('`gstack-config get artifacts_sync_mode` returns a value (the rename landed)', () => {
+  // gstack-config is a bash script; Windows can't exec it via spawnSync
+  // without a Git Bash interpreter shim. Skip on Windows — the deprecated-key
+  // denylist test above already pins the v1.27.0.0 rename behavior at the
+  // doc layer, which is the actual invariant this wave defends.
+  test.skipIf(process.platform === 'win32')('`gstack-config get artifacts_sync_mode` returns a value (the rename landed)', () => {
     // Run from a clean HOME so the user's local config doesn't pollute.
     const tmpHome = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gstack-cfg-'));
     try {
