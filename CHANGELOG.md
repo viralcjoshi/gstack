@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.39.0.0] - 2026-05-14
+
+## **`buildFetchHandler` ships. Embedders compose overlay routes on top of**
+## **gstack's dispatch without forking the browse server.**
+
+The browse daemon's request handler is now exposed as a factory. Embedders pass a `ServerConfig` with their own `authToken`, `browserManager`, and an optional `beforeRoute` hook, and gstack returns a `ServerHandle` with `fetchLocal`, `fetchTunnel`, `shutdown`, and `stopListeners`. The CLI path delegates to the same factory, so externally-observable behavior is unchanged. Auth state is now cfg-driven end-to-end: the module-level `AUTH_TOKEN` constant, its `initRegistry` boot call, the module `validateAuth`, and the module `shutdown` are deleted, and the factory closure owns those responsibilities so the embedder's browser is the one that actually closes on shutdown. The `beforeRoute` hook fires after the tunnel surface filter and before per-route dispatch. Returning a `Response` short-circuits gstack; returning `null` falls through to the gstack route. Invalid bearer resolves to `null` at the hook (per a new security warning in the JSDoc), so overlay code gates on its own trust signal rather than re-implementing bearer auth.
+
+### The numbers that matter
+
+Source: `bun test browse/test/server-factory.test.ts` — 28 tests covering both the type surface (14 pre-existing) and the new factory contract (14 added), all green in 344 ms. Plus 49 token-registry tests, 8 browser-skills-e2e tests, 29 browser-skill-commands tests, 15 skill-token tests — every test that uses `initRegistry` under the new idempotency guard passes. Zero new test regressions versus main across the rest of the suite.
+
+| Surface | Before | After |
+|---|---|---|
+| `buildFetchHandler(cfg: ServerConfig): ServerHandle` | type-only; throwing factory not exported | live factory used by CLI + ready for gbrowser submodule |
+| `beforeRoute` overlay hook | declared in `ServerConfig` since v1.34.0.0, never wired | runs after tunnel filter and before per-route dispatch; short-circuits on `Response`, falls through on `null` |
+| Module-level `AUTH_TOKEN` const | `sanitizeAuthToken(process.env.AUTH_TOKEN) ?? randomUUID()` baked at import time, read by 7+ call sites | deleted; cfg.authToken is the single source of truth, threaded through `launchHeaded`, the state file write, and the factory in one pass |
+| Module-level `validateAuth` | reads module `AUTH_TOKEN` | deleted; factory-scoped closure reads `cfg.authToken` |
+| Module-level `shutdown` | closes module-level `browserManager` (wrong for phoenix) | deleted; factory-scoped `shutdown` closes `cfg.browserManager` |
+| `initRegistry` | overwrites `rootToken` unconditionally | idempotent for same token; throws clearly for different token (catches embedder misconfiguration at boot) |
+| `__resetRegistry()` test helper | did not exist | mirrors `__resetConnectRateLimit`; lets tests start with a clean registry without tripping the new guard |
+| Net diff | — | ~500 LOC moved + 14 new contract tests + 1 idempotency guard + 1 hook wiring + 4 test files updated to use `__resetRegistry` |
+
+The factory deletes the import-time env coupling that v1.34.0.0 documented but couldn't fix on its own.
+
+### What this means for embedders
+
+gbrowser v0.6.0.0 (phoenix overlay) can now ship. Phoenix imports `buildFetchHandler` directly, passes its own `BrowserManager` and an overlay hook, and the same gstack dispatch carries every command. No fork, no duplicated routes, no need to set `process.env.AUTH_TOKEN` before importing. For the CLI, nothing changes.
+
+### Itemized changes
+
+#### Added
+- `buildFetchHandler(cfg: ServerConfig): ServerHandle` in `browse/src/server.ts`.
+- `beforeRoute` hook wiring in the request handler, with a security warning JSDoc for overlay authors.
+- 14 factory contract tests in `browse/test/server-factory.test.ts` (covers ServerHandle shape, auth wiring, validation throws, hook semantics across both surfaces, and registry idempotency / mismatch-throw).
+- `__resetRegistry()` test-only export in `browse/src/token-registry.ts` (mirrors `__resetConnectRateLimit`).
+- Module-level `activeShutdown` ref so module-level timers and signal handlers route through the factory-scoped shutdown.
+
+#### Changed
+- `start()` delegates handler construction to `buildFetchHandler`. Reads env once via `resolveConfigFromEnv()` and threads the resulting `authToken` into `launchHeaded`, the state-file write, and the factory.
+- Auth is now cfg-driven end-to-end. Module-level `AUTH_TOKEN` const, `initRegistry(AUTH_TOKEN)` boot call, `validateAuth`, and `shutdown` are deleted; factory closure owns them.
+- `initRegistry` is idempotent for same-token re-init; throws clearly for different-token re-init with a message pointing embedders to `buildFetchHandler`.
+- Bun.serve return value (`server`) is captured in `start()` (Codex outside-voice finding #8).
+- `ServerConfig.beforeRoute` JSDoc updated for contract honesty plus a security warning about not returning privileged data from the hook without re-checking auth.
+
+#### For contributors
+- Lifecycle singletons (`LOCAL_LISTEN_PORT`, `tunnelActive`, inspector state, `isShuttingDown`) intentionally stay at module scope; auth state does not. Multi-handle isolation is captured as a follow-up TODO.
+- Existing tests that followed `rotateRoot() → initRegistry('fixed-token')` swap to `__resetRegistry() → initRegistry('fixed-token')` so the new mismatch guard doesn't fire.
+- Source-pattern tests in `dual-listener.test.ts` and `server-auth.test.ts` updated to match the new identifiers (`handle.fetchLocal`/`handle.fetchTunnel`, `authToken`, `shutdownFn`).
+
 ## [1.37.0.0] - 2026-05-14
 
 ## **Split-engine gbrain: remote MCP for brain, local PGLite for code.**
