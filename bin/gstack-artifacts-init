@@ -227,6 +227,8 @@ projects/*/ceo-plans/*.md
 projects/*/ceo-plans/*/*.md
 projects/*/designs/*.md
 projects/*/designs/*/*.md
+projects/*/*-design-*.md
+projects/*/*-test-plan-*.md
 projects/*/timeline.jsonl
 retros/*.md
 developer-profile.json
@@ -252,6 +254,8 @@ cat > "$GSTACK_HOME/.brain-privacy-map.json" <<'EOF'
   {"pattern": "projects/*/ceo-plans/*/*.md", "class": "artifact"},
   {"pattern": "projects/*/designs/*.md", "class": "artifact"},
   {"pattern": "projects/*/designs/*/*.md", "class": "artifact"},
+  {"pattern": "projects/*/*-design-*.md", "class": "artifact"},
+  {"pattern": "projects/*/*-test-plan-*.md", "class": "artifact"},
   {"pattern": "retros/*.md", "class": "artifact"},
   {"pattern": "builder-journey.md", "class": "artifact"},
   {"pattern": "projects/*/timeline.jsonl", "class": "behavioral"},
@@ -268,6 +272,8 @@ cat > "$GSTACK_HOME/.gitattributes" <<'EOF'
 retros/*.md merge=union
 projects/*/designs/**/*.md merge=union
 projects/*/ceo-plans/**/*.md merge=union
+projects/*/*-design-*.md merge=union
+projects/*/*-test-plan-*.md merge=union
 EOF
 
 # ---- register merge drivers in local git config ----
