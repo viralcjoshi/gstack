@@ -728,6 +728,74 @@ describe("planHostnameFoldMigration", () => {
   });
 });
 
+describe("constrainSourceId truncation (hyphen-boundary cut)", () => {
+  // PR #1481 (Drummerms): the old slug.slice(-tailBudget) cut mid-word when
+  // the boundary fell inside a token. For a long repo like
+  // `drummerms-av-sow-wiz-skill-270c0001` the truncated tail used to end in
+  // `kill-270c0001` (from `skill`). The new tokenized cut walks hyphen
+  // boundaries from the right and only keeps whole tokens.
+  //
+  // Exercised via the dry-run preview (`gbrain sources add gstack-code-…`),
+  // since constrainSourceId is module-private.
+  it("never produces mid-word truncation artifacts like `kill` (from `skill`)", () => {
+    const home = makeTestHome();
+    const gstackHome = join(home, ".gstack");
+    mkdirSync(gstackHome, { recursive: true });
+    const repo = mkdtempSync(join(tmpdir(), "gstack-hyphen-cut-"));
+    spawnSync("git", ["init", "--quiet", "-b", "main"], { cwd: repo });
+    // Remote chosen to be long enough that constrainSourceId truncates and
+    // the boundary lands inside the word `skill`.
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/drummerms-av-sow-wiz/skill-270c0001.git"], { cwd: repo });
+
+    const r = spawnSync("bun", [SCRIPT, "--dry-run", "--code-only", "--quiet"], {
+      encoding: "utf-8",
+      timeout: 60000,
+      cwd: repo,
+      env: { ...process.env, HOME: home, GSTACK_HOME: gstackHome },
+    });
+    expect(r.status).toBe(0);
+    const id = (r.stdout || "").match(/gbrain sources add (\S+)/)?.[1];
+    expect(id).toBeTruthy();
+    // The id must not contain the mid-word fragment `kill` (left over from
+    // slicing inside `skill`). Tokens that survive truncation must be whole.
+    expect(id).not.toMatch(/(^|-)kill(-|$)/);
+    // Still gbrain-valid.
+    expect(id!.length).toBeLessThanOrEqual(32);
+    expect(id!).toMatch(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/);
+
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  // Closes #1357: HTTPS remotes ending in `.git` used to pass periods through
+  // to the source id. canonicalizeRemote strips the `.git` suffix; the
+  // sanitizer also strips any residual non-alnum. Test asserts the source id
+  // is period-free for the exact case from the issue.
+  it("produces a period-free source id for HTTPS remotes ending in .git (#1357)", () => {
+    const home = makeTestHome();
+    const gstackHome = join(home, ".gstack");
+    mkdirSync(gstackHome, { recursive: true });
+    const repo = mkdtempSync(join(tmpdir(), "gstack-https-period-"));
+    spawnSync("git", ["init", "--quiet", "-b", "main"], { cwd: repo });
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/foo/bar.git"], { cwd: repo });
+
+    const r = spawnSync("bun", [SCRIPT, "--dry-run", "--code-only", "--quiet"], {
+      encoding: "utf-8",
+      timeout: 60000,
+      cwd: repo,
+      env: { ...process.env, HOME: home, GSTACK_HOME: gstackHome },
+    });
+    expect(r.status).toBe(0);
+    const id = (r.stdout || "").match(/gbrain sources add (\S+)/)?.[1];
+    expect(id).toBeTruthy();
+    expect(id).not.toContain(".");
+    expect(id!).toMatch(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/);
+
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+});
+
 describe("sourceLocalPath", () => {
   let bindir: string;
   beforeEach(() => {
