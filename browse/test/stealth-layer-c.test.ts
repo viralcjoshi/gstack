@@ -11,6 +11,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
   buildStealthScript,
+  buildGStackLaunchArgs,
   WEBDRIVER_MASK_SCRIPT,
   STEALTH_LAUNCH_ARGS,
   STEALTH_IGNORE_DEFAULT_ARGS,
@@ -113,6 +114,97 @@ describe('buildStealthScript — T3 Layer C', () => {
     const s = buildStealthScript(hw);
     // D6: dropped from UA, must not leak in via stealth payload either.
     expect(s).not.toContain('GStackBrowser');
+  });
+});
+
+describe('buildGStackLaunchArgs — Pack 1 cmdline-switch construction', () => {
+  // Helper: clear all GSTACK_* env, run test body, restore env.
+  function withEnv(env: Record<string, string | undefined>, body: () => void) {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of Object.keys(process.env)) {
+      if (k.startsWith('GSTACK_')) {
+        saved[k] = process.env[k];
+        delete process.env[k];
+      }
+    }
+    for (const [k, v] of Object.entries(env)) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    try {
+      body();
+    } finally {
+      for (const k of Object.keys(process.env)) {
+        if (k.startsWith('GSTACK_')) delete process.env[k];
+      }
+      for (const [k, v] of Object.entries(saved)) {
+        if (v !== undefined) process.env[k] = v;
+      }
+    }
+  }
+
+  test('empty env produces empty arg list', () => {
+    withEnv({}, () => {
+      expect(buildGStackLaunchArgs()).toEqual([]);
+    });
+  });
+
+  test('all env values populated → all 6 switches emitted', () => {
+    withEnv({
+      GSTACK_GPU_VENDOR: 'Apple Inc.',
+      GSTACK_GPU_RENDERER: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version)',
+      GSTACK_PLATFORM: 'MacARM',
+      GSTACK_GPU_CHIPSET: 'Apple M4 Max',
+      GSTACK_HW_CONCURRENCY: '16',
+      GSTACK_DEVICE_MEMORY: '8',
+    }, () => {
+      const args = buildGStackLaunchArgs();
+      expect(args).toContain('--gstack-gpu-vendor=Apple Inc.');
+      expect(args).toContain('--gstack-gpu-renderer=ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version)');
+      expect(args).toContain('--gstack-ua-platform=macOS');
+      expect(args).toContain('--gstack-ua-model=Apple M4 Max');
+      expect(args).toContain('--gstack-hw-concurrency=16');
+      expect(args).toContain('--gstack-device-memory=8');
+      expect(args.length).toBe(6);
+    });
+  });
+
+  test('platform mapping: MacARM and MacIntel both → macOS', () => {
+    withEnv({ GSTACK_PLATFORM: 'MacARM' }, () => {
+      expect(buildGStackLaunchArgs()).toContain('--gstack-ua-platform=macOS');
+    });
+    withEnv({ GSTACK_PLATFORM: 'MacIntel' }, () => {
+      expect(buildGStackLaunchArgs()).toContain('--gstack-ua-platform=macOS');
+    });
+  });
+
+  test('platform mapping: Win32 → Windows, Linux x86_64 → Linux', () => {
+    withEnv({ GSTACK_PLATFORM: 'Win32' }, () => {
+      expect(buildGStackLaunchArgs()).toContain('--gstack-ua-platform=Windows');
+    });
+    withEnv({ GSTACK_PLATFORM: 'Linux x86_64' }, () => {
+      expect(buildGStackLaunchArgs()).toContain('--gstack-ua-platform=Linux');
+    });
+  });
+
+  test('partial env: only set switches that have values', () => {
+    withEnv({ GSTACK_HW_CONCURRENCY: '12' }, () => {
+      const args = buildGStackLaunchArgs();
+      expect(args).toEqual(['--gstack-hw-concurrency=12']);
+    });
+  });
+
+  test('unrecognized platform falls through without --gstack-ua-platform', () => {
+    withEnv({ GSTACK_PLATFORM: 'OS/2' }, () => {
+      const args = buildGStackLaunchArgs();
+      expect(args.some(a => a.startsWith('--gstack-ua-platform='))).toBe(false);
+    });
+  });
+
+  test('GPU vendor with spaces survives intact (no quote/escape regression)', () => {
+    withEnv({ GSTACK_GPU_VENDOR: 'NVIDIA Corporation' }, () => {
+      const args = buildGStackLaunchArgs();
+      expect(args).toContain('--gstack-gpu-vendor=NVIDIA Corporation');
+    });
   });
 });
 

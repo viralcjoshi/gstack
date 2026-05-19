@@ -213,8 +213,8 @@ export class BrowserManager {
     // BROWSE_EXTENSIONS_DIR points to an unpacked Chrome extension directory.
     // Extensions only work in headed mode, so we use an off-screen window.
     const extensionsDir = process.env.BROWSE_EXTENSIONS_DIR;
-    const { STEALTH_LAUNCH_ARGS } = await import('./stealth');
-    const launchArgs: string[] = [...STEALTH_LAUNCH_ARGS];
+    const { STEALTH_LAUNCH_ARGS, buildGStackLaunchArgs } = await import('./stealth');
+    const launchArgs: string[] = [...STEALTH_LAUNCH_ARGS, ...buildGStackLaunchArgs()];
     let useHeadless = true;
 
     // Docker/CI/root: Chromium sandbox requires unprivileged user namespaces which
@@ -295,11 +295,18 @@ export class BrowserManager {
 
     // Find the gstack extension directory for auto-loading
     const extensionPath = this.findExtensionPath();
+    const { buildGStackLaunchArgs } = await import('./stealth');
     const launchArgs = [
       '--hide-crash-restore-bubble',
       // Anti-bot-detection: remove the navigator.webdriver flag that Playwright sets.
       // Sites like Google and NYTimes check this to block automation browsers.
       '--disable-blink-features=AutomationControlled',
+      // GStack Pack 1: per-install hardware/GPU/UA-CH overrides for the
+      // C++ patches in gbrowser's Chromium build. Each switch is a no-op
+      // on Chromium builds without the corresponding patch (the patch's
+      // empty-fallback returns native), so this is safe on stock Playwright
+      // Chromium too.
+      ...buildGStackLaunchArgs(),
     ];
     if (extensionPath) {
       // Skip --load-extension when running against a custom Chromium build
@@ -1296,7 +1303,8 @@ export class BrowserManager {
       const fs = require('fs');
       const path = require('path');
       const extensionPath = this.findExtensionPath();
-      const launchArgs = ['--hide-crash-restore-bubble'];
+      const { buildGStackLaunchArgs } = await import('./stealth');
+      const launchArgs: string[] = ['--hide-crash-restore-bubble', ...buildGStackLaunchArgs()];
       if (extensionPath) {
         launchArgs.push(`--disable-extensions-except=${extensionPath}`);
         launchArgs.push(`--load-extension=${extensionPath}`);

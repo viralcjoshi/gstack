@@ -271,6 +271,62 @@ export const STEALTH_LAUNCH_ARGS = [
 ];
 
 /**
+ * Build the `--gstack-*=` cmdline switches that the Pack 1 Chromium
+ * patches read (webgl-vendor-spoof, ua-client-hints-stealth, worker-
+ * navigator-stealth). Values come from the GSTACK_* env vars that
+ * gbd populates from host_profile.go at startup.
+ *
+ * Each switch is only emitted when its env var is non-empty — empty
+ * env values fall through to the patch's "no override" path, which
+ * returns the real Chromium native value. This keeps the helper safe
+ * on builds that DO NOT have the C++ patches applied (gbrowser
+ * pre-Pack-1) and on hosts where gbd hasn't yet populated some
+ * fields (legacy installs).
+ *
+ * Mapping (gbd env → Chromium cmdline switch → C++ patch consumer):
+ *   GSTACK_GPU_VENDOR        → --gstack-gpu-vendor        → webgl-vendor-spoof.patch
+ *   GSTACK_GPU_RENDERER      → --gstack-gpu-renderer      → webgl-vendor-spoof.patch
+ *   GSTACK_PLATFORM          → --gstack-ua-platform       → ua-client-hints-stealth.patch
+ *                              (maps MacARM/MacIntel → "macOS")
+ *   GSTACK_GPU_CHIPSET       → --gstack-ua-model          → ua-client-hints-stealth.patch
+ *   GSTACK_HW_CONCURRENCY    → --gstack-hw-concurrency    → worker-navigator-stealth.patch
+ *   GSTACK_DEVICE_MEMORY     → --gstack-device-memory     → worker-navigator-stealth.patch
+ */
+export function buildGStackLaunchArgs(): string[] {
+  const env = (globalThis as any).process?.env ?? {};
+  const args: string[] = [];
+
+  const vendor = env.GSTACK_GPU_VENDOR;
+  if (vendor) args.push(`--gstack-gpu-vendor=${vendor}`);
+
+  const renderer = env.GSTACK_GPU_RENDERER;
+  if (renderer) args.push(`--gstack-gpu-renderer=${renderer}`);
+
+  // Map gbd's "MacARM"/"MacIntel" classification to the UA-CH "macOS"
+  // platform string Chromium emits natively. Other future platforms
+  // would map similarly (Win32 → "Windows", Linux → "Linux").
+  const platform = env.GSTACK_PLATFORM;
+  if (platform === 'MacARM' || platform === 'MacIntel') {
+    args.push('--gstack-ua-platform=macOS');
+  } else if (platform === 'Win32') {
+    args.push('--gstack-ua-platform=Windows');
+  } else if (platform && platform.startsWith('Linux')) {
+    args.push('--gstack-ua-platform=Linux');
+  }
+
+  const chipset = env.GSTACK_GPU_CHIPSET;
+  if (chipset) args.push(`--gstack-ua-model=${chipset}`);
+
+  const hw = env.GSTACK_HW_CONCURRENCY;
+  if (hw) args.push(`--gstack-hw-concurrency=${hw}`);
+
+  const memory = env.GSTACK_DEVICE_MEMORY;
+  if (memory) args.push(`--gstack-device-memory=${memory}`);
+
+  return args;
+}
+
+/**
  * Playwright default args to strip via ignoreDefaultArgs.
  *
  * Playwright passes these by default. Each one is a visible automation
